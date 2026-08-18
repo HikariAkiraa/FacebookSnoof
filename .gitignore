@@ -1,0 +1,21 @@
+# Credentials & Session States
+config/storage_state.json
+config/config.yaml
+
+# Databases & Dynamic Storage
+database/*.db
+database/*.db-wal
+database/*.db-shm
+
+# Virtual Environments & Caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs & Diagnostics
+logs/
+*.log
+debug_feed.html

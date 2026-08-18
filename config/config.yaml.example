@@ -1,0 +1,43 @@
+scraper:
+  schedule_interval_minutes: 15
+  schedule_jitter_minutes: 3
+  headless: true
+  max_scrolls_per_group: 4
+  request_delay_min_seconds: 5.0
+  request_delay_max_seconds: 12.0
+  storage_state_path: "config/storage_state.json"
+
+groups:
+  - id: "137236800360667"
+    name: "Jual Beli Komputer/Laptop, sparepart PC Jakarta, Depok, bogor dan sekitarny"
+  - id: "246443141547760"
+    name: "KOMUNITAS RAKIT PC KERE HORE"
+  - id: "258651985834918"
+    name: "Forum Jual Beli VGA Card Indonesia"
+  - id: "527822370633917"
+    name: "JUAL/BELI KOMPUTER,SPERPART, BARU/BEKAS WILAYAH TANGERANG"
+  - id: "rakitpckerehore"
+    name: "Grup Rakit PC Kere Hore"
+  - id: "jualbelivga"
+    name: "Jual beli VGA second - baru & Aksesoris PC Gaming"
+  - id: "454412923988558"
+    name: "Jual-Beli perangkat Hardware HDD, SSD, RAM Bekas"
+  - id: "830724201526843"
+    name: "JUAL BELI KOMPUTER LAPTOP BARU BEKAS INDONESIA"
+
+gemini:
+  api_key: "YOUR_GEMINI_API_KEY" # Reads from GEMINI_API_KEY env var if empty or placeholder
+  primary_model: "gemini-3.5-flash-lite"
+  fallback_model: "gemini-3.1-flash-lite"
+  timeout_seconds: 30
+  min_deal_score_alert: 75
+  lookup_table_path: "lookup_table.md"
+
+telegram:
+  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  chat_id: "YOUR_TELEGRAM_CHAT_ID"
+  enabled: false
+
+discord:
+  webhook_url: "YOUR_DISCORD_WEBHOOK_URL"
+  enabled: false
