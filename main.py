@@ -21,7 +21,7 @@ from engine.collector import FacebookCollector
 from engine.filters import is_candidate_listing
 from engine.evaluator import DealEvaluator
 from notifier.telegram import TelegramNotifier
-from notifier.discord import DiscordNotifier, start_discord_command_listener
+from notifier.discord import DiscordNotifier
 
 # Ensure logs directory exists before logging setup
 os.makedirs("logs", exist_ok=True)
@@ -282,9 +282,6 @@ def main():
         webhook_url=discord_cfg.get("webhook_url", ""),
         enabled=discord_cfg.get("enabled", False)
     )
-
-    # Launch background Discord Command Listener if bot_token is configured
-    start_discord_command_listener(discord_cfg.get("bot_token", ""), discord_cfg.get("webhook_url", ""))
 
     if args.single_run:
         logger.info("Executing single pipeline run mode...")
