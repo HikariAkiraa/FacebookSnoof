@@ -11,7 +11,7 @@ class DiscordNotifier:
     """Dispatches formatted Discord Embed alerts to Discord channels via Webhook."""
 
     def __init__(self, webhook_url: str, enabled: bool = True):
-        self.webhook_url = webhook_url
+        self.webhook_url = webhook_url.strip().rstrip("/") if webhook_url else ""
         self.enabled = enabled
 
     def format_deal_embed_payload(
