@@ -38,9 +38,10 @@ This lookup table serves as baseline reference pricing for secondhand PC hardwar
 
 | Specification | Fair Market Range (IDR) | Average Baseline (IDR) |
 | :--- | :--- | :--- |
-| DDR4 16GB (2x8GB) 3200MHz | 450,000 - 650,000 | 550,000 |
-| DDR4 32GB (2x16GB) 3200MHz | 900,000 - 1,250,000 | 1,050,000 |
-| DDR5 32GB (2x16GB) 5600/6000MHz | 1,400,000 - 1,900,000 | 1,650,000 |
+| DDR4 16GB (2x8GB) 3200MHz | 1,400,000 - 1,600,000 | 1,500,000 |
+| DDR4 32GB (2x16GB) 3200MHz | 2,400,000 - 2,600,000 | 2,500,000 |
+| DDR5 16GB (2x8GB) 5600MHz | 2,500,000 - 3,500,000 | 3,000,000 |
+| DDR5 32GB (2x16GB) 5600/6000MHz | 4,500,000 - 5,500,000 | 5,000,000 |
 
 ## Motherboards
 
