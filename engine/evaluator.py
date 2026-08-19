@@ -32,6 +32,16 @@ class DealEvaluationSchema(BaseModel):
     reasoning: str = Field(default="", description="One concise sentence explaining why this deal is good or why it is skipped.")
 
 
+class SinglePostEvaluation(DealEvaluationSchema):
+    """Structured Pydantic schema for single post evaluation in batch mode, including post_id."""
+    post_id: str = Field(default="", description="Exact ID of the post being evaluated.")
+
+
+class BatchEvaluationResponse(BaseModel):
+    """Structured Pydantic schema for batch valuation JSON output containing evaluations for multiple posts."""
+    evaluations: List[SinglePostEvaluation] = Field(default_factory=list, description="List of evaluations for each input post.")
+
+
 class DealEvaluator:
     """Evaluates candidate Facebook Marketplace listings using Google AI Studio Gemini API."""
 
@@ -86,6 +96,7 @@ CRITICAL TRUTHFULNESS DIRECTIVE (ZERO HALLUCINATION):
 - NEVER invent, hallucinate, or guess hardware component names, specifications, or prices that are not mentioned in the post.
 - DO NOT default to example hardware names if the post does not explicitly mention them!
 - If the post text is vague, lacks specific hardware model details, or is selling non-PC items (laptops without specs, accessories, or general chatter), set "is_valid_pc_hardware": false and state the missing info in "reasoning".
+- Always preserve the exact `post_id` provided for each post when outputting JSON responses.
 
 Item Categories Supported:
 - "GPU", "CPU", "RAM", "Motherboard", "PSU", "Storage", "Full PC" (PC Rakitan Full Set / Desktop Package), "Other".
@@ -104,7 +115,7 @@ REFERENCE MARKET LOOKUP TABLE:
 {self.lookup_context}
 \"\"\"
 
-Analyze the input post and output a JSON response matching the required schema.
+Analyze the input post(s) and output a JSON response matching the required schema.
 """
 
     def parse_and_validate_response(self, raw_response: str) -> Optional[DealEvaluationSchema]:
@@ -136,6 +147,47 @@ Analyze the input post and output a JSON response matching the required schema.
             logger.error(f"Failed to parse or validate LLM JSON response: {e}\nRaw Output: {raw_response}")
             return None
 
+    def parse_and_validate_batch_response(self, raw_response: str) -> List[SinglePostEvaluation]:
+        """Parse raw Gemini batch output and validate as BatchEvaluationResponse or List of SinglePostEvaluation."""
+        try:
+            target_str = raw_response.strip()
+            
+            if json_repair is not None:
+                repaired_json = json_repair.repair_json(target_str)
+            else:
+                repaired_json = target_str
+
+            if not repaired_json:
+                logger.error("Parsed JSON string is empty.")
+                return []
+
+            data = json.loads(repaired_json)
+            evals = []
+
+            if isinstance(data, dict):
+                if "evaluations" in data and isinstance(data["evaluations"], list):
+                    for item in data["evaluations"]:
+                        try:
+                            evals.append(SinglePostEvaluation(**item))
+                        except Exception as e:
+                            logger.warning(f"Failed to validate item in batch 'evaluations': {e}")
+                else:
+                    try:
+                        evals.append(SinglePostEvaluation(**data))
+                    except Exception as e:
+                        logger.warning(f"Failed to validate dict item: {e}")
+            elif isinstance(data, list):
+                for item in data:
+                    try:
+                        evals.append(SinglePostEvaluation(**item))
+                    except Exception as e:
+                        logger.warning(f"Failed to validate item in batch list: {e}")
+
+            return evals
+        except Exception as e:
+            logger.error(f"Failed to parse or validate batch LLM JSON response: {e}\nRaw Output: {raw_response}")
+            return []
+
     def evaluate_post(self, post_text: str) -> Optional[DealEvaluationSchema]:
         """Evaluate raw Facebook post text using Gemini API with primary model and automatic fallback model."""
         if not post_text or len(post_text.strip()) < 10:
@@ -156,7 +208,6 @@ Analyze the input post and output a JSON response matching the required schema.
             top_p=0.95
         )
 
-        # Try primary model first, fallback to fallback_model if rate limited or error occurs
         models_to_try = [self.primary_model, self.fallback_model]
         if self.primary_model == self.fallback_model:
             models_to_try = [self.primary_model]
@@ -186,3 +237,106 @@ Analyze the input post and output a JSON response matching the required schema.
 
         logger.error("All Gemini API models failed to evaluate post.")
         return None
+
+    def evaluate_batch(
+        self,
+        candidate_posts: List[Dict[str, Any]],
+        batch_size: int = 20
+    ) -> Dict[str, SinglePostEvaluation]:
+        """
+        Evaluate candidate Facebook posts in chunks of `batch_size` using 1 API call per chunk.
+        
+        Args:
+            candidate_posts: List of dicts, each containing at least 'post_id' and 'post_text'.
+            batch_size: Max posts per Gemini API call (default 20).
+            
+        Returns:
+            Dict mapping post_id -> SinglePostEvaluation
+        """
+        if not candidate_posts:
+            return {}
+
+        if not self.client:
+            logger.error("Gemini API Client is not initialized. Cannot perform batch evaluation.")
+            return {}
+
+        results: Dict[str, SinglePostEvaluation] = {}
+        
+        # Split candidate_posts into chunks of batch_size
+        chunks = [candidate_posts[i:i + batch_size] for i in range(0, len(candidate_posts), batch_size)]
+        logger.info(f"Starting batch evaluation for {len(candidate_posts)} posts across {len(chunks)} chunk(s) (batch size: {batch_size})...")
+
+        system_instruction = self.build_system_instruction()
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=BatchEvaluationResponse,
+            temperature=0.1,
+            top_p=0.95
+        )
+
+        for chunk_idx, chunk in enumerate(chunks, 1):
+            logger.info(f"Processing evaluation batch chunk {chunk_idx}/{len(chunks)} ({len(chunk)} posts)...")
+            
+            formatted_posts = []
+            for post in chunk:
+                p_id = str(post.get("post_id", ""))
+                p_text = post.get("post_text", "").strip()
+                formatted_posts.append(f"--- POST START (ID: {p_id}) ---\n{p_text}\n--- POST END ---")
+            
+            user_prompt = "EVALUATE THE FOLLOWING LIST OF POSTS AND RETURN EVALUATIONS FOR EACH:\n\n" + "\n\n".join(formatted_posts)
+
+            models_to_try = [self.primary_model, self.fallback_model]
+            if self.primary_model == self.fallback_model:
+                models_to_try = [self.primary_model]
+
+            chunk_success = False
+            for model_name in models_to_try:
+                try:
+                    logger.info(f"Sending batch request ({len(chunk)} posts) to Gemini API [{model_name}]...")
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=user_prompt,
+                        config=config
+                    )
+                    
+                    raw_output = response.text
+                    logger.info(f"Gemini API ({model_name}) batch response received ({len(raw_output)} chars).")
+                    logger.debug(f"RAW BATCH RESPONSE:\n{raw_output}")
+                    
+                    parsed_evals = self.parse_and_validate_batch_response(raw_output)
+                    if parsed_evals:
+                        for single_eval in parsed_evals:
+                            if single_eval.post_id:
+                                results[single_eval.post_id] = single_eval
+                        logger.info(f"Batch chunk {chunk_idx} successfully evaluated ({len(parsed_evals)} items parsed).")
+                        chunk_success = True
+                        break
+                    else:
+                        logger.warning(f"Batch response parsing yielded 0 valid evaluations using [{model_name}].")
+
+                except Exception as e:
+                    logger.warning(f"Gemini API batch request failed for model [{model_name}]: {e}")
+                    if model_name != models_to_try[-1]:
+                        logger.info(f"Failing over to fallback model [{self.fallback_model}] for batch chunk {chunk_idx}...")
+                        continue
+
+            # Emergency Fallback: If both models fail for this batch chunk, fallback to individual post evaluations
+            if not chunk_success:
+                logger.error(f"Batch chunk {chunk_idx} failed total across all models. Executing emergency individual evaluation fallback for {len(chunk)} posts...")
+                for post in chunk:
+                    p_id = str(post.get("post_id", ""))
+                    p_text = post.get("post_text", "")
+                    single_res = self.evaluate_post(p_text)
+                    if single_res:
+                        results[p_id] = SinglePostEvaluation(
+                            post_id=p_id,
+                            **single_res.model_dump()
+                        )
+                        logger.info(f"Individual fallback evaluation succeeded for post {p_id}.")
+                    else:
+                        logger.error(f"Individual fallback evaluation failed for post {p_id}.")
+
+        return results
+

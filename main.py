@@ -113,6 +113,9 @@ def run_pipeline_cycle(config: dict, db: DatabaseManager, collector: FacebookCol
     total_interesting = 0
     total_skipped = 0
 
+    candidates_to_eval = []
+
+    # Phase 1: Scrape groups, deduplicate, save raw post to DB, and filter candidates
     for group in groups:
         group_id = str(group["id"])
         group_name = group.get("name", f"Group {group_id}")
@@ -148,12 +151,30 @@ def run_pipeline_cycle(config: dict, db: DatabaseManager, collector: FacebookCol
                 continue
 
             total_phase1_passed += 1
-            logger.info(f"Tier-1 Candidate Passed! Evaluating post {post_id} with Ollama...")
+            logger.info(f"Tier-1 Candidate Passed! Post {post_id} queued for Gemini batch evaluation.")
+            
+            candidates_to_eval.append({
+                "post_id": post_id,
+                "post_text": post_text,
+                "post_url": post_url,
+                "group_name": group_name,
+                "author_name": author_name
+            })
 
-            # Tier 2: Ollama Cognitive Valuation
-            eval_result = evaluator.evaluate_post(post_text)
+    # Phase 2: Batch evaluation with Gemini API (20 posts per batch chunk)
+    if candidates_to_eval:
+        logger.info(f"Sending {len(candidates_to_eval)} candidate post(s) to Gemini API in batch mode...")
+        eval_batch_results = evaluator.evaluate_batch(candidates_to_eval, batch_size=20)
+
+        for post in candidates_to_eval:
+            post_id = post["post_id"]
+            post_url = post["post_url"]
+            group_name = post["group_name"]
+
+            eval_result = eval_batch_results.get(post_id)
             if not eval_result:
-                logger.warning(f"Evaluation failed or yielded invalid JSON for post {post_id}.")
+                logger.warning(f"Batch evaluation yielded no result for post {post_id}. Skipping alerts.")
+                total_skipped += 1
                 continue
 
             is_interesting = eval_result.is_valid_pc_hardware and (eval_result.deal_score >= min_alert_score)
