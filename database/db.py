@@ -100,6 +100,16 @@ class DatabaseManager:
             cursor.execute("SELECT 1 FROM posts WHERE post_id = ? LIMIT 1;", (str(post_id),))
             return cursor.fetchone() is not None
 
+    @staticmethod
+    def _sanitize_utf8(text: Optional[str]) -> str:
+        """Sanitize string to ensure valid UTF-8 encoding by removing invalid UTF-16 surrogate characters."""
+        if text is None:
+            return ""
+        try:
+            return text.encode("utf-8", "ignore").decode("utf-8")
+        except Exception:
+            return str(text)
+
     def insert_post(
         self,
         post_id: str,
@@ -110,13 +120,20 @@ class DatabaseManager:
         post_timestamp: Optional[str] = None
     ) -> bool:
         """Insert a newly extracted raw post into the database. Returns True if inserted."""
+        safe_post_id = self._sanitize_utf8(str(post_id))
+        safe_group_id = self._sanitize_utf8(str(group_id))
+        safe_post_url = self._sanitize_utf8(post_url)
+        safe_post_text = self._sanitize_utf8(post_text)
+        safe_author_name = self._sanitize_utf8(author_name) if author_name else None
+        safe_post_timestamp = self._sanitize_utf8(post_timestamp) if post_timestamp else None
+
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO posts (post_id, group_id, post_url, post_text, author_name, post_timestamp)
                     VALUES (?, ?, ?, ?, ?, ?);
-                """, (str(post_id), str(group_id), post_url, post_text, author_name, post_timestamp))
+                """, (safe_post_id, safe_group_id, safe_post_url, safe_post_text, safe_author_name, safe_post_timestamp))
                 conn.commit()
                 return True
         except Exception as e:
@@ -135,6 +152,12 @@ class DatabaseManager:
         verdict: str
     ) -> Optional[int]:
         """Save Ollama cognitive valuation result into database."""
+        safe_post_id = self._sanitize_utf8(str(post_id))
+        safe_hardware_name = self._sanitize_utf8(hardware_name)
+        safe_item_category = self._sanitize_utf8(item_category)
+        safe_condition_summary = self._sanitize_utf8(condition_summary)
+        safe_verdict = self._sanitize_utf8(verdict)
+
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -145,8 +168,8 @@ class DatabaseManager:
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 """, (
-                    str(post_id), hardware_name, item_category, asking_price,
-                    estimated_market_price, condition_summary, deal_score, verdict
+                    safe_post_id, safe_hardware_name, safe_item_category, asking_price,
+                    estimated_market_price, safe_condition_summary, deal_score, safe_verdict
                 ))
                 conn.commit()
                 return cursor.lastrowid
