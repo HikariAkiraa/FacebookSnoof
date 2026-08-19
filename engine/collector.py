@@ -157,7 +157,10 @@ class FacebookCollector:
             except Exception as e:
                 logger.error(f"Error during collection of group {group_id}: {e}")
             finally:
-                browser.close()
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
         logger.info(f"Extracted {len(extracted_posts)} total raw posts from group [{group_name}].")
         return extracted_posts
