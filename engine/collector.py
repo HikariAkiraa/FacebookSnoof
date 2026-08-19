@@ -61,7 +61,7 @@ class FacebookCollector:
             return match_pfbid.group(1)
         return None
 
-    def scrape_group(self, group_id: str, group_name: str) -> List[Dict[str, Any]]:
+    def scrape_group(self, group_id: str, group_name: str, discord_notifier: Any = None) -> List[Dict[str, Any]]:
         """Scrape chronological posts for a specified Facebook Group ID."""
         if sync_playwright is None:
             logger.error("Playwright package is not installed. Please run `pip install playwright && playwright install chromium`.")
@@ -73,6 +73,8 @@ class FacebookCollector:
 
         if not os.path.exists(self.storage_state_path):
             logger.error(f"Storage state file missing at: {self.storage_state_path}. Please generate cookies first.")
+            if discord_notifier:
+                discord_notifier.send_session_expired_alert("Storage state cookie file missing!")
             return []
 
         logger.info(f"Navigating to group [{group_name}] (ID: {group_id})...")
@@ -113,10 +115,25 @@ class FacebookCollector:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
                 self._random_delay()
 
+                # Check if Facebook redirected to login screen, checkpoint, or landing page
+                current_url = page.url.lower()
+                if "login" in current_url or "checkpoint" in current_url or "/groups/" not in current_url:
+                    logger.error(f"Facebook session expired or redirected to login screen ({page.url}). Cookies in storage_state.json may have expired! Please re-run `python engine/auth.py` or use /setcookie.")
+                    if discord_notifier:
+                        discord_notifier.send_session_expired_alert(page.url)
+                    return []
+
+                # Wait for React feed component to mount
+                try:
+                    page.wait_for_selector('div[role="feed"], div[role="main"], div[data-pagelet^="FeedUnit"]', timeout=10000)
+                except Exception:
+                    pass
+
                 # Perform scroll iterations
                 for scroll_step in range(self.max_scrolls):
                     logger.info(f"Scrolling group [{group_name}] (Step {scroll_step + 1}/{self.max_scrolls})...")
                     page.evaluate("window.scrollBy(0, random_scroll = Math.floor(Math.random() * 600) + 400);")
+                    page.keyboard.press("PageDown")
                     self._random_delay()
 
                 # Primary Strategy: Parse intercepted GraphQL payloads
@@ -181,12 +198,31 @@ class FacebookCollector:
         posts = []
         soup = BeautifulSoup(html_content, "html.parser")
         
-        # Target individual article wrappers ONLY (never parent feed container)
-        article_containers = soup.find_all("div", attrs={"role": "article"})
-        logger.info(f"DOM Fallback found {len(article_containers)} post article containers.")
+        # Strategy 1: Find candidate containers via role="article" or data-pagelet FeedUnit
+        candidate_containers = soup.find_all(lambda tag: tag.name == "div" and (
+            tag.get("role") == "article" or
+            (tag.get("data-pagelet") and "FeedUnit" in str(tag.get("data-pagelet")))
+        ))
+
+        # Strategy 2: Search for all post permalink anchor tags and find their parent wrappers
+        permalink_anchors = soup.find_all("a", href=lambda href: href and self._extract_post_id_from_url(href) is not None)
+        seen_parents = {id(c) for c in candidate_containers}
+        
+        for a in permalink_anchors:
+            parent = (
+                a.find_parent("div", attrs={"role": "article"}) or
+                a.find_parent("div", attrs={"data-pagelet": re.compile(r"FeedUnit", re.I)}) or
+                a.find_parent("div", attrs={"dir": "auto"}) or
+                a.parent
+            )
+            if parent and id(parent) not in seen_parents:
+                seen_parents.add(id(parent))
+                candidate_containers.append(parent)
+
+        logger.info(f"DOM Fallback found {len(candidate_containers)} candidate post containers.")
 
         seen_post_ids = set()
-        for idx, container in enumerate(article_containers):
+        for idx, container in enumerate(candidate_containers):
             # Extract verified permalink link inside this specific article container
             links = container.find_all("a", href=True)
             post_url = ""

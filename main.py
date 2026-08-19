@@ -21,7 +21,7 @@ from engine.collector import FacebookCollector
 from engine.filters import is_candidate_listing
 from engine.evaluator import DealEvaluator
 from notifier.telegram import TelegramNotifier
-from notifier.discord import DiscordNotifier
+from notifier.discord import DiscordNotifier, start_discord_command_listener
 
 # Ensure logs directory exists before logging setup
 os.makedirs("logs", exist_ok=True)
@@ -118,7 +118,7 @@ def run_pipeline_cycle(config: dict, db: DatabaseManager, collector: FacebookCol
         group_name = group.get("name", f"Group {group_id}")
 
         logger.info(f"Processing group: [{group_name}] ({group_id})...")
-        raw_posts = collector.scrape_group(group_id, group_name)
+        raw_posts = collector.scrape_group(group_id, group_name, discord_notifier)
         db.update_group_last_scraped(group_id)
 
         for post in raw_posts:
@@ -282,6 +282,9 @@ def main():
         webhook_url=discord_cfg.get("webhook_url", ""),
         enabled=discord_cfg.get("enabled", False)
     )
+
+    # Launch background Discord Command Listener if bot_token is configured
+    start_discord_command_listener(discord_cfg.get("bot_token", ""), discord_cfg.get("webhook_url", ""))
 
     if args.single_run:
         logger.info("Executing single pipeline run mode...")
